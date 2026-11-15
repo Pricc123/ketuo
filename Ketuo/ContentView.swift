@@ -14,7 +14,7 @@ struct ContentView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Color.white.ignoresSafeArea()
+            Color(red: 0.039, green: 0.039, blue: 0.059).ignoresSafeArea()
             WebContainer(url: home, fallback: backup, loading: $loading, failed: $failed)
                 .ignoresSafeArea(edges: .bottom)
 
@@ -44,7 +44,7 @@ struct ContentView: View {
                     .tint(Color(red: 0.92, green: 0.35, blue: 0.05))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.white)
+                .background(Color(red: 0.039, green: 0.039, blue: 0.059))
             }
         }
     }
@@ -86,8 +86,8 @@ struct WebContainer: UIViewRepresentable {
         wv.allowsBackForwardNavigationGestures = true
         wv.scrollView.bounces = true
         wv.isOpaque = false
-        wv.backgroundColor = .white
-        wv.scrollView.backgroundColor = .white
+        wv.backgroundColor = UIColor(red: 0.039, green: 0.039, blue: 0.059, alpha: 1)
+        wv.scrollView.backgroundColor = UIColor(red: 0.039, green: 0.039, blue: 0.059, alpha: 1)
 
         let rc = UIRefreshControl()
         rc.tintColor = UIColor(red: 0.92, green: 0.35, blue: 0.05, alpha: 1)

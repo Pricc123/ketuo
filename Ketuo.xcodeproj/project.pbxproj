@@ -9,12 +9,14 @@
 /* Begin PBXBuildFile section */
 		A100000000000000000000A9 /* KetuoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000A5 /* KetuoApp.swift */; };
 		A100000000000000000000AA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000A6 /* ContentView.swift */; };
+		A100000000000000000000BA /* PlateScanController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000B6 /* PlateScanController.swift */; };
 		A100000000000000000000AB /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000A7 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		A100000000000000000000A5 /* KetuoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KetuoApp.swift; sourceTree = "<group>"; };
 		A100000000000000000000A6 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A100000000000000000000B6 /* PlateScanController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlateScanController.swift; sourceTree = "<group>"; };
 		A100000000000000000000A7 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A100000000000000000000A8 /* Ketuo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Ketuo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -43,6 +45,7 @@
 			children = (
 				A100000000000000000000A5 /* KetuoApp.swift */,
 				A100000000000000000000A6 /* ContentView.swift */,
+				A100000000000000000000B6 /* PlateScanController.swift */,
 				A100000000000000000000A7 /* Assets.xcassets */,
 			);
 			path = Ketuo;
@@ -126,6 +129,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A100000000000000000000AA /* ContentView.swift in Sources */,
+				A100000000000000000000BA /* PlateScanController.swift in Sources */,
 				A100000000000000000000A9 /* KetuoApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

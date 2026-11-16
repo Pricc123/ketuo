@@ -67,18 +67,29 @@ struct WebContainer: UIViewRepresentable {
         // 注入原生分享桥：H5 里 window.TireApp.share(title, url) -> 系统分享面板（可转发到微信等）
         let bridgeJS = """
         (function(){
-          if (window.TireApp) return;
-          window.TireApp = {
-            share: function(title, url){
+          window.TireApp = window.TireApp || {};
+          if (!window.TireApp.share) {
+            window.TireApp.share = function(title, url){
               try { window.webkit.messageHandlers.tireShare.postMessage({title: title || '', url: url || ''}); } catch(e) {}
-            }
-          };
+            };
+          }
+          if (!window.TireApp.openPlateScan) {
+            window.TireApp.openPlateScan = function(){
+              try { window.webkit.messageHandlers.nativeScan.postMessage('start'); } catch(e) {}
+            };
+          }
+          if (!window.TireApp.closePlateScan) {
+            window.TireApp.closePlateScan = function(){
+              try { window.webkit.messageHandlers.nativeScan.postMessage('stop'); } catch(e) {}
+            };
+          }
         })();
         """
         cfg.userContentController.addUserScript(
             WKUserScript(source: bridgeJS, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         )
         cfg.userContentController.add(context.coordinator, name: "tireShare")
+        cfg.userContentController.add(context.coordinator, name: "nativeScan")
 
         let wv = WKWebView(frame: .zero, configuration: cfg)
         wv.navigationDelegate = context.coordinator
@@ -227,6 +238,25 @@ struct WebContainer: UIViewRepresentable {
         // 接收 H5 的分享请求 -> 系统分享面板
         func userContentController(_ userContentController: WKUserContentController,
                                   didReceive message: WKScriptMessage) {
+            if message.name == "nativeScan" {
+                let act = (message.body as? String) ?? ""
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    if act == "start" {
+                        guard let vc = self.topVC() else { return }
+                        if vc is PlateScanController { return }
+                        let c = PlateScanController()
+                        c.webView = self.webView
+                        c.modalPresentationStyle = .fullScreen
+                        vc.present(c, animated: true)
+                    } else if act == "stop" {
+                        if let vc = self.topVC(), vc is PlateScanController {
+                            vc.dismiss(animated: true, completion: nil)
+                        }
+                    }
+                }
+                return
+            }
             guard message.name == "tireShare" else { return }
             var title = "启强汽车服务"
             var urlStr = ""

@@ -68,7 +68,7 @@ struct WebContainer: UIViewRepresentable {
         let bridgeJS = """
         (function(){
           window.TireApp = window.TireApp || {};
-          window.__KT_APPVER = "1.1.1618";
+          window.__KT_APPVER = "1.2.1619";
           if (!window.TireApp.share) {
             window.TireApp.share = function(title, url){
               try { window.webkit.messageHandlers.tireShare.postMessage({title: title || '', url: url || ''}); } catch(e) {}
@@ -89,7 +89,7 @@ struct WebContainer: UIViewRepresentable {
         cfg.userContentController.addUserScript(
             WKUserScript(source: bridgeJS, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         )
-        cfg.applicationNameForUserAgent = "KetuoApp/1.1.1618"
+        cfg.applicationNameForUserAgent = "KetuoApp/1.2.1619"
         cfg.userContentController.add(context.coordinator, name: "tireShare")
         cfg.userContentController.add(context.coordinator, name: "nativeScan")
 

@@ -202,7 +202,15 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         guard !configured else { return }
         configured = true
 
-        guard let dev = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+        // 优先多摄虚拟设备：2x/3x 时自动切到长焦镜头（真光学变焦），放大不糊
+        let types: [AVCaptureDevice.DeviceType] = [
+            .builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera
+        ]
+        let disc = AVCaptureDevice.DiscoverySession(deviceTypes: types,
+                                                    mediaType: .video,
+                                                    position: .back)
+        guard let dev = disc.devices.first
+                ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
                 ?? AVCaptureDevice.default(for: .video) else {
             hint.text = "没有可用摄像头"
             return
@@ -225,8 +233,9 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
             if session.canAddInput(input) {
                 session.addInput(input)
             }
+            // 4K 下用 YUV 420f 比 BGRA 省 2/3 带宽，避免掉帧和系统降级
             output.videoSettings = [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             ]
             output.alwaysDiscardsLateVideoFrames = true
             output.setSampleBufferDelegate(self, queue: queue)
@@ -242,6 +251,9 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
             previewLayer = layer
 
             try dev.lockForConfiguration()
+            if dev.isGeometricDistortionCorrectionSupported {
+                dev.isGeometricDistortionCorrectionEnabled = true
+            }
             if dev.isFocusModeSupported(.continuousAutoFocus) {
                 dev.focusMode = .continuousAutoFocus
             }
@@ -253,6 +265,12 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
             }
             dev.videoZoomFactor = 1
             dev.unlockForConfiguration()
+
+            if session.sessionPreset == .hd4K3840x2160 {
+                hint.text = "4K 原生 · 对准车牌自动识别中..."
+            } else if session.sessionPreset == .hd1920x1080 {
+                hint.text = "1080p 原生 · 对准车牌自动识别中..."
+            }
         } catch {
             hint.text = "相机初始化失败"
         }
@@ -293,10 +311,27 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
             try? d.lockForConfiguration()
             d.videoZoomFactor = v
             try? d.unlockForConfiguration()
+            refocusCenter(d)
         }
         zoomLabel.text = String(format: "%.1fx", v)
         if abs(zoomSlider.value - Float(v)) > 0.01 {
             zoomSlider.value = Float(v)
+        }
+    }
+
+    /// 变焦后对画面中心重新对焦一次，再回连续对焦（车牌常在中心取景框）
+    private func refocusCenter(_ d: AVCaptureDevice) {
+        guard d.isFocusPointOfInterestSupported, d.isFocusModeSupported(.autoFocus) else { return }
+        try? d.lockForConfiguration()
+        d.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5)
+        d.focusMode = .autoFocus
+        try? d.unlockForConfiguration()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            try? d.lockForConfiguration()
+            if d.isFocusModeSupported(.continuousAutoFocus) {
+                d.focusMode = .continuousAutoFocus
+            }
+            try? d.unlockForConfiguration()
         }
     }
 

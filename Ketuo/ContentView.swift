@@ -74,8 +74,8 @@ struct WebContainer: UIViewRepresentable {
             };
           }
           if (!window.TireApp.openPlateScan) {
-            window.TireApp.openPlateScan = function(){
-              try { window.webkit.messageHandlers.nativeScan.postMessage('start'); } catch(e) {}
+            window.TireApp.openPlateScan = function(kind){
+              try { window.webkit.messageHandlers.nativeScan.postMessage(kind === 'qr' ? 'startQR' : 'start'); } catch(e) {}
             };
           }
           if (!window.TireApp.closePlateScan) {
@@ -242,10 +242,11 @@ struct WebContainer: UIViewRepresentable {
                 let act = (message.body as? String) ?? ""
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
-                    if act == "start" {
+                    if act == "start" || act == "startQR" {
                         guard let vc = self.topVC() else { return }
                         if vc is PlateScanController { return }
                         let c = PlateScanController()
+                        c.mode = (act == "startQR") ? "qr" : "plate"
                         c.webView = self.webView
                         c.modalPresentationStyle = .fullScreen
                         vc.present(c, animated: true)

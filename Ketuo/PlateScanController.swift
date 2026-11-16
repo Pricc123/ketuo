@@ -6,11 +6,17 @@ import CoreImage
 /// 原生高清车牌识别相机（iOS）
 /// 用 AVCaptureSession 取 4K 视频帧（WebView 的 getUserMedia 最高只有 1080p），
 /// 每 0.65 秒裁一帧中心区域转 JPEG 回传 H5 做 OCR，放大后依然清晰。
-final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate {
+final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureMetadataOutputObjectsDelegate {
 
     weak var webView: WKWebView?
 
+    /// "plate" = 车牌识别；"qr" = 二维码/条码扫码
+    var mode: String = "plate"
+
     private let session = AVCaptureSession()
+    private let metadataOutput = AVCaptureMetadataOutput()
+    private var lastQR = ""
+    private var lastQRTime = Date.distantPast
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private let output = AVCaptureVideoDataOutput()
     private let queue = DispatchQueue(label: "plate.scan.queue")
@@ -61,7 +67,7 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
     private func buildUI() {
         let safeBottom = view.safeAreaInsets.bottom
 
-        hint.text = "对准车牌，自动识别中..."
+        hint.text = mode == "qr" ? "对准二维码自动识别..." : "对准车牌，自动识别中..."
         hint.textColor = .white
         hint.font = .systemFont(ofSize: 15, weight: .medium)
         hint.textAlignment = .center
@@ -132,8 +138,8 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
 
             frameView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             frameView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            frameView.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: 0.86),
-            frameView.heightAnchor.constraint(equalTo: frameView.widthAnchor, multiplier: 0.34),
+            frameView.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: mode == "qr" ? 0.68 : 0.86),
+            frameView.heightAnchor.constraint(equalTo: frameView.widthAnchor, multiplier: mode == "qr" ? 1.0 : 0.34),
 
             panel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             panel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -233,14 +239,23 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
             if session.canAddInput(input) {
                 session.addInput(input)
             }
-            // 4K 下用 YUV 420f 比 BGRA 省 2/3 带宽，避免掉帧和系统降级
-            output.videoSettings = [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-            ]
-            output.alwaysDiscardsLateVideoFrames = true
-            output.setSampleBufferDelegate(self, queue: queue)
-            if session.canAddOutput(output) {
-                session.addOutput(output)
+            if mode == "qr" {
+                // 扫码走系统级元数据识别，比网页 jsQR 快得多、暗光也稳
+                if session.canAddOutput(metadataOutput) {
+                    session.addOutput(metadataOutput)
+                    metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
+                    metadataOutput.metadataObjectTypes = [.qr, .ean13, .ean8, .code128, .code39]
+                }
+            } else {
+                // 4K 下用 YUV 420f 比 BGRA 省 2/3 带宽，避免掉帧和系统降级
+                output.videoSettings = [
+                    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                ]
+                output.alwaysDiscardsLateVideoFrames = true
+                output.setSampleBufferDelegate(self, queue: queue)
+                if session.canAddOutput(output) {
+                    session.addOutput(output)
+                }
             }
             session.commitConfiguration()
 
@@ -266,7 +281,9 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
             dev.videoZoomFactor = 1
             dev.unlockForConfiguration()
 
-            if session.sessionPreset == .hd4K3840x2160 {
+            if mode == "qr" {
+                hint.text = "原生扫码 · 对准二维码自动识别"
+            } else if session.sessionPreset == .hd4K3840x2160 {
                 hint.text = "4K 原生 · 对准车牌自动识别中..."
             } else if session.sessionPreset == .hd1920x1080 {
                 hint.text = "1080p 原生 · 对准车牌自动识别中..."
@@ -402,6 +419,39 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         guard let data = ui.jpegData(compressionQuality: 0.85) else { return }
         let b64 = data.base64EncodedString()
         send(b64)
+    }
+
+    // MARK: - 扫码
+
+    func metadataOutput(_ output: AVCaptureMetadataOutput,
+                        didOutput metadataObjects: [AVMetadataObject],
+                        from connection: AVCaptureConnection) {
+        guard mode == "qr" else { return }
+        for o in metadataObjects {
+            guard let code = o as? AVMetadataMachineReadableCodeObject,
+                  let v = code.stringValue, !v.isEmpty else { continue }
+            let now = Date()
+            if v == lastQR && now.timeIntervalSince(lastQRTime) < 2.0 { return }
+            lastQR = v
+            lastQRTime = now
+            sendQR(v)
+            return
+        }
+    }
+
+    private func sendQR(_ text: String) {
+        guard let wv = webView else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.hint.text = "已识别，正在查询..."
+        }
+        let esc = text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+            .replacingOccurrences(of: "\n", with: "")
+        let js = "window._onNativeQR&&window._onNativeQR('\(esc)')"
+        DispatchQueue.main.async {
+            wv.evaluateJavaScript(js, completionHandler: nil)
+        }
     }
 
     private func send(_ b64: String) {

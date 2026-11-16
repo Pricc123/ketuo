@@ -2,6 +2,7 @@ import UIKit
 import AVFoundation
 import WebKit
 import CoreImage
+import Vision
 
 /// 原生高清车牌识别相机（iOS）
 /// 用 AVCaptureSession 取 4K 视频帧（WebView 的 getUserMedia 最高只有 1080p），
@@ -416,9 +417,75 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         }
         guard let cg = ciContext.createCGImage(img, from: img.extent) else { return }
         let ui = UIImage(cgImage: cg, scale: 1, orientation: .up)
+        // 手机本地 Vision 识别（免费无限次，不消耗任何云端额度）
+        recognizeLocally(ui)
         guard let data = ui.jpegData(compressionQuality: 0.85) else { return }
         let b64 = data.base64EncodedString()
         send(b64)
+    }
+
+    // MARK: - 本地识别（Vision，零成本无限次）
+
+    private var lastLocalPlate = ""
+    private var lastLocalPlateTime = Date(timeIntervalSince1970: 0)
+
+    /// 用 iOS 自带 Vision 做文字识别，命中车牌格式直接回调 H5
+    private func recognizeLocally(_ image: UIImage) {
+        guard let cg = image.cgImage else { return }
+        let req = VNRecognizeTextRequest { [weak self] r, _ in
+            guard let self = self else { return }
+            guard let obs = r.results as? [VNRecognizedTextObservation], !obs.isEmpty else { return }
+            var found: String? = nil
+            for o in obs {
+                for cand in o.topCandidates(3) {
+                    if let p = Self.extractPlate(cand.string) { found = p; break }
+                }
+                if found != nil { break }
+            }
+            guard let plate = found else { return }
+            let now = Date()
+            if plate == self.lastLocalPlate && now.timeIntervalSince(self.lastLocalPlateTime) < 3.0 { return }
+            self.lastLocalPlate = plate
+            self.lastLocalPlateTime = now
+            self.sendPlate(plate)
+        }
+        req.recognitionLevel = .accurate
+        req.recognitionLanguages = ["zh-Hans", "en-US"]
+        req.usesLanguageCorrection = false
+        let h = VNImageRequestHandler(cgImage: cg, orientation: .up, options: [:])
+        DispatchQueue.global(qos: .userInitiated).async { try? h.perform([req]) }
+    }
+
+    /// 从一段文本里提取合法车牌号
+    static func extractPlate(_ raw: String) -> String? {
+        var s = raw.uppercased()
+        let drop = CharacterSet(charactersIn: " \u{00B7}\u{2022}.-\u{2014}_\u{2018}\u{2019},\u{FF0C}\u{3002}:\u{FF1A}\u{00A0}")
+        s = s.filter { ch in !ch.unicodeScalars.contains(where: { drop.contains($0) }) }
+        // 常见误识修正
+        let fix: [(String, String)] = [
+            ("\u{7CB5}", "\u{7CA4}"), ("\u{5967}", "\u{7CA4}"), ("\u{5965}", "\u{7CA4}"),
+            ("\u{6CF8}", "\u{6CAA}")
+        ]
+        for (a, b) in fix { s = s.replacingOccurrences(of: a, with: b) }
+        let pattern = "[\u{4EAC}\u{6D25}\u{6CAA}\u{6E1D}\u{5180}\u{8C6B}\u{4E91}\u{8FBD}\u{9ED1}\u{6E58}\u{7696}\u{9C81}\u{65B0}\u{82CF}\u{6D59}\u{8D63}\u{9102}\u{6842}\u{7518}\u{664B}\u{8499}\u{9655}\u{5409}\u{95FD}\u{8D35}\u{7CA4}\u{9752}\u{85CF}\u{5DDD}\u{5B81}\u{743C}][A-HJ-NP-Z][A-HJ-NP-Z0-9]{4,5}[A-HJ-NP-Z0-9\u{6302}\u{5B66}\u{8B66}\u{6E2F}\u{6FB3}]"
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let ns = s as NSString
+        guard let m = re.firstMatch(in: s, range: NSRange(location: 0, length: ns.length)) else { return nil }
+        return ns.substring(with: m.range)
+    }
+
+    private func sendPlate(_ plate: String) {
+        guard let wv = webView else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.hint.text = "\u{5DF2}\u{8BC6}\u{522B}\u{FF1A}\(plate)"
+        }
+        let esc = plate
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+        let js = "window._onNativePlate&&window._onNativePlate('\(esc)')"
+        DispatchQueue.main.async {
+            wv.evaluateJavaScript(js, completionHandler: nil)
+        }
     }
 
     // MARK: - 扫码

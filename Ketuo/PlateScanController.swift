@@ -605,12 +605,12 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
 
     /// 百度复核请求在途：一次只放一帧出去，避免重复计费
     private var verifyInFlight = false
-    /// 本地连续未命中帧数：攒够 missForce 帧就强制发一帧给百度兜底
+    /// 本地连续未命中帧数：攒够 missForce 帧（约 5 秒）就强制发一帧给百度兜底
     private var missSinceLastVerify = 0
-    private let missForce = 15
+    private let missForce = 8
 
     /// 先用手机自带 Vision 认一遍：认出车牌格式才把当前帧发百度复核；
-    /// 认不出就不发（省额度）；连续 15 帧（约 9 秒）都认不出，强制发一帧兜底。
+    /// 认不出就不发（省额度）；连续 8 帧（约 5 秒）都认不出，强制发一帧兜底。
     private func gateAndVerify(_ image: UIImage, data: Data) {
         if verifyInFlight { return }
         guard !visionBusy, let cg = image.cgImage else { return }
@@ -656,8 +656,8 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
             self?.hint.text = hintText
         }
         send(data.base64EncodedString())
-        // 百度回包后 H5 会关相机；万一没关，3 秒后解锁，避免卡死
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+        // 百度回包后 H5 会关相机；万一没关，1.5 秒后解锁，避免卡死也不至于太慢
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             self?.verifyInFlight = false
         }
     }

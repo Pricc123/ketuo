@@ -26,6 +26,8 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
     private var device: AVCaptureDevice?
     private var maxZoom: CGFloat = 1
     private var curZoom: CGFloat = 1
+    /// 打开相机时的默认倍率（3x 走长焦，车牌清晰度最好）
+    private let defaultZoom: CGFloat = 3
     private var torchOn = false
     private var lastGrab = Date.distantPast
     private var frameCount = 0
@@ -288,6 +290,9 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
             dev.videoZoomFactor = 1
             dev.unlockForConfiguration()
 
+            // 默认拉到 3 倍：多摄虚拟设备会自动切到长焦镜头，真光学变焦
+            applyZoom(min(defaultZoom, maxZoom), refocus: false)
+
             if mode == "qr" {
                 hint.text = "原生扫码 · 对准二维码自动识别"
             } else if session.sessionPreset == .hd4K3840x2160 {
@@ -419,7 +424,8 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         let now = Date()
-        guard now.timeIntervalSince(lastGrab) >= 0.30 else { return }
+        // 全走百度车牌识别：约 0.6 秒一帧；H5 侧识别成功后会自动关相机
+        guard now.timeIntervalSince(lastGrab) >= 0.60 else { return }
         lastGrab = now
         guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
@@ -436,7 +442,7 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         let cropRect = CGRect(x: sx, y: sy, width: cw, height: ch)
         var img = ci.cropped(to: cropRect)
 
-        // 缩到 1600 宽，兼顾清晰度和传输体积
+        // 缩到 1200 宽，兼顾清晰度和传输体积
         let target: CGFloat = 1200
         if img.extent.width > target {
             let s = target / img.extent.width
@@ -444,18 +450,7 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         }
         guard let cg = ciContext.createCGImage(img, from: img.extent) else { return }
         let ui = UIImage(cgImage: cg, scale: 1, orientation: .up)
-        // 手机本地 Vision 识别（免费无限次，不消耗任何云端额度）
-        recognizeLocally(ui)
-        // 云端兜底默认关闭：百度车牌识别免费额度仅约 1000 次/月（摊每天约 33 次），
-        // 实时扫描几十秒就会打光，所以完全依赖手机本地 Vision 识别。
-        guard netFallbackEnabled else { return }
-        // 本地先扫：连续 7 帧（约 2 秒）都没命中，才动用百度额度
-        guard localMissCount >= 7 else { return }
-        let nowT = Date()
-        guard netQuota > 0, nowT.timeIntervalSince(lastNetSent) >= 4.0 else { return }
-        netQuota -= 1
-        localMissCount = 0
-        lastNetSent = nowT
+        // 全部走百度车牌识别（已开通后付费，不再受免费额度限制）
         guard let data = ui.jpegData(compressionQuality: 0.85) else { return }
         send(data.base64EncodedString())
     }

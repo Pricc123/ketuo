@@ -132,6 +132,10 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         btnRow.addSubview(torchBtn)
         btnRow.addSubview(closeBtn)
 
+        // 双指缩放（原生相机不经过网页，需自己接手势）
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(onPinch(_:)))
+        view.addGestureRecognizer(pinch)
+
         NSLayoutConstraint.activate([
             hint.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
             hint.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
@@ -320,7 +324,7 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
 
     // MARK: - 变焦 / 闪光灯
 
-    private func applyZoom(_ z: CGFloat) {
+    private func applyZoom(_ z: CGFloat, refocus: Bool = true) {
         var v = z
         if v < 1 { v = 1 }
         if v > maxZoom { v = maxZoom }
@@ -329,7 +333,7 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
             try? d.lockForConfiguration()
             d.videoZoomFactor = v
             try? d.unlockForConfiguration()
-            refocusCenter(d)
+            if refocus { refocusCenter(d) }
         }
         zoomLabel.text = String(format: "%.1fx", v)
         if abs(zoomSlider.value - Float(v)) > 0.01 {
@@ -350,6 +354,22 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
                 d.focusMode = .continuousAutoFocus
             }
             try? d.unlockForConfiguration()
+        }
+    }
+
+    private var pinchStartZoom: CGFloat = 1
+
+    /// 双指缩放：过程中不重复对焦，松手后再对一次，避免画面抖动
+    @objc private func onPinch(_ g: UIPinchGestureRecognizer) {
+        switch g.state {
+        case .began:
+            pinchStartZoom = curZoom
+        case .changed:
+            applyZoom(pinchStartZoom * g.scale, refocus: false)
+        case .ended, .cancelled, .failed:
+            applyZoom(pinchStartZoom * g.scale, refocus: true)
+        default:
+            break
         }
     }
 

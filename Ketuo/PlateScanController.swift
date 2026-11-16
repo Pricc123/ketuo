@@ -412,7 +412,7 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         let now = Date()
-        guard now.timeIntervalSince(lastGrab) >= 0.65 else { return }
+        guard now.timeIntervalSince(lastGrab) >= 0.30 else { return }
         lastGrab = now
         guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
@@ -430,7 +430,7 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         var img = ci.cropped(to: cropRect)
 
         // 缩到 1600 宽，兼顾清晰度和传输体积
-        let target: CGFloat = 1600
+        let target: CGFloat = 1200
         if img.extent.width > target {
             let s = target / img.extent.width
             img = img.transformed(by: CGAffineTransform(scaleX: s, y: s))
@@ -439,9 +439,12 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         let ui = UIImage(cgImage: cg, scale: 1, orientation: .up)
         // 手机本地 Vision 识别（免费无限次，不消耗任何云端额度）
         recognizeLocally(ui)
+        // 云端兜底限流：先判断再编码，省掉无谓的 JPEG 编码开销
+        let nowT = Date()
+        guard nowT.timeIntervalSince(lastNetSent) >= 1.5 else { return }
+        lastNetSent = nowT
         guard let data = ui.jpegData(compressionQuality: 0.85) else { return }
-        let b64 = data.base64EncodedString()
-        send(b64)
+        send(data.base64EncodedString())
     }
 
     // MARK: - 本地识别（Vision，零成本无限次）
@@ -450,10 +453,15 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
     private var lastLocalPlateTime = Date(timeIntervalSince1970: 0)
 
     /// 用 iOS 自带 Vision 做文字识别，命中车牌格式直接回调 H5
+    private var visionBusy = false
+
     private func recognizeLocally(_ image: UIImage) {
+        guard !visionBusy else { return }
         guard let cg = image.cgImage else { return }
+        visionBusy = true
         let req = VNRecognizeTextRequest { [weak self] r, _ in
             guard let self = self else { return }
+            self.visionBusy = false
             guard let obs = r.results as? [VNRecognizedTextObservation], !obs.isEmpty else { return }
             var found: String? = nil
             for o in obs {
@@ -462,6 +470,7 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
                 }
                 if found != nil { break }
             }
+            self.reportVision(obs)
             guard let plate = found else { return }
             let now = Date()
             if plate == self.lastLocalPlate && now.timeIntervalSince(self.lastLocalPlateTime) < 3.0 { return }
@@ -473,7 +482,28 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         req.recognitionLanguages = ["zh-Hans", "en-US"]
         req.usesLanguageCorrection = false
         let h = VNImageRequestHandler(cgImage: cg, orientation: .up, options: [:])
-        DispatchQueue.global(qos: .userInitiated).async { try? h.perform([req]) }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do { try h.perform([req]) } catch { self?.visionBusy = false }
+        }
+    }
+
+    private var lastVisionReport = Date(timeIntervalSince1970: 0)
+
+    /// 把 Vision 识别到的原始文本上报到服务器日志，便于校准车牌规则（3 秒最多一次）
+    private func reportVision(_ obs: [VNRecognizedTextObservation]) {
+        let now = Date()
+        guard now.timeIntervalSince(lastVisionReport) >= 3.0 else { return }
+        lastVisionReport = now
+        var parts: [String] = []
+        for o in obs.prefix(6) {
+            if let t = o.topCandidates(1).first?.string, !t.isEmpty { parts.append(t) }
+        }
+        guard !parts.isEmpty else { return }
+        let raw = parts.joined(separator: "|")
+        guard let esc = raw.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://kt.pricc.fun/api/probe?native=vis&extra=\(esc)")
+        else { return }
+        URLSession.shared.dataTask(with: url).resume()
     }
 
     /// 从一段文本里提取合法车牌号
@@ -541,11 +571,13 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         }
     }
 
+    private var lastNetSent = Date(timeIntervalSince1970: 0)
+
     private func send(_ b64: String) {
         frameCount += 1
         let n = frameCount
         DispatchQueue.main.async { [weak self] in
-            if n % 3 == 1 {
+            if n % 6 == 1 {
                 self?.hint.text = "识别中... 第\(n)帧"
             }
         }

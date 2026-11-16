@@ -30,6 +30,8 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
     private let defaultZoom: CGFloat = 3
     private var torchOn = false
     private var lastGrab = Date.distantPast
+    /// 手动「高清拍照」请求：置 true 后下一帧走全图拍照流程
+    private var wantShot = false
     private var frameCount = 0
     private var configured = false
 
@@ -37,6 +39,7 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
     private let zoomSlider = UISlider()
     private let zoomLabel = UILabel()
     private let torchBtn = UIButton(type: .system)
+    private let photoBtn = UIButton(type: .system)
     private let closeBtn = UIButton(type: .system)
     private let minusBtn = UIButton(type: .system)
     private let plusBtn = UIButton(type: .system)
@@ -126,12 +129,21 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         panel.addSubview(btnRow)
 
         stylePill(torchBtn, title: "\u{1F526} 闪光灯")
+        stylePill(photoBtn, title: "\u{1F4F7} 高清拍照")
         stylePill(closeBtn, title: "\u{2716} 关闭")
+        torchBtn.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        photoBtn.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        closeBtn.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        photoBtn.backgroundColor = UIColor(red: 0.976, green: 0.451, blue: 0.086, alpha: 0.95)
+        photoBtn.setTitleColor(.white, for: .normal)
         torchBtn.addTarget(self, action: #selector(toggleTorch), for: .touchUpInside)
+        photoBtn.addTarget(self, action: #selector(takeShot), for: .touchUpInside)
         closeBtn.addTarget(self, action: #selector(closeSelf), for: .touchUpInside)
         torchBtn.translatesAutoresizingMaskIntoConstraints = false
+        photoBtn.translatesAutoresizingMaskIntoConstraints = false
         closeBtn.translatesAutoresizingMaskIntoConstraints = false
         btnRow.addSubview(torchBtn)
+        btnRow.addSubview(photoBtn)
         btnRow.addSubview(closeBtn)
 
         // 双指缩放（原生相机不经过网页，需自己接手势）
@@ -184,12 +196,17 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
             torchBtn.leadingAnchor.constraint(equalTo: btnRow.leadingAnchor),
             torchBtn.topAnchor.constraint(equalTo: btnRow.topAnchor),
             torchBtn.bottomAnchor.constraint(equalTo: btnRow.bottomAnchor),
-            torchBtn.widthAnchor.constraint(equalTo: btnRow.widthAnchor, multiplier: 0.5, constant: -6),
+            torchBtn.widthAnchor.constraint(equalTo: btnRow.widthAnchor, multiplier: 0.32, constant: -4),
+
+            photoBtn.centerXAnchor.constraint(equalTo: btnRow.centerXAnchor),
+            photoBtn.topAnchor.constraint(equalTo: btnRow.topAnchor),
+            photoBtn.bottomAnchor.constraint(equalTo: btnRow.bottomAnchor),
+            photoBtn.widthAnchor.constraint(equalTo: btnRow.widthAnchor, multiplier: 0.32, constant: -4),
 
             closeBtn.trailingAnchor.constraint(equalTo: btnRow.trailingAnchor),
             closeBtn.topAnchor.constraint(equalTo: btnRow.topAnchor),
             closeBtn.bottomAnchor.constraint(equalTo: btnRow.bottomAnchor),
-            closeBtn.widthAnchor.constraint(equalTo: btnRow.widthAnchor, multiplier: 0.5, constant: -6),
+            closeBtn.widthAnchor.constraint(equalTo: btnRow.widthAnchor, multiplier: 0.32, constant: -4),
         ])
     }
 
@@ -424,9 +441,16 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         let now = Date()
-        // 全走百度车牌识别：约 0.6 秒一帧；H5 侧识别成功后会自动关相机
-        guard now.timeIntervalSince(lastGrab) >= 0.60 else { return }
-        lastGrab = now
+        let shooting = wantShot
+        if shooting {
+            // 手动拍照：不受 0.6 秒节流限制，抓当前帧全图
+            wantShot = false
+            lastGrab = now
+        } else {
+            // 全走百度车牌识别：约 0.6 秒一帧；H5 侧识别成功后会自动关相机
+            guard now.timeIntervalSince(lastGrab) >= 0.60 else { return }
+            lastGrab = now
+        }
         guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         var ci = CIImage(cvPixelBuffer: pb)
@@ -434,6 +458,21 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         ci = ci.oriented(.right)
         let ext = ci.extent
         guard ext.width > 0, ext.height > 0 else { return }
+
+        // 高清拍照：不裁剪，整幅缩到 1920 宽发出去，识别更准
+        if shooting {
+            var full = ci
+            let tw: CGFloat = 1920
+            if full.extent.width > tw {
+                let s = tw / full.extent.width
+                full = full.transformed(by: CGAffineTransform(scaleX: s, y: s))
+            }
+            guard let fcg = ciContext.createCGImage(full, from: full.extent) else { return }
+            let fui = UIImage(cgImage: fcg, scale: 1, orientation: .up)
+            guard let fd = fui.jpegData(compressionQuality: 0.9) else { return }
+            sendShot(fd.base64EncodedString())
+            return
+        }
 
         let cw = max(ext.width * 0.88, 480)
         let ch = max(ext.height * 0.36, 160)
@@ -602,6 +641,25 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         let js = "window._onNativeFrame&&window._onNativeFrame('\(b64)')"
         DispatchQueue.main.async {
             wv.evaluateJavaScript(js, completionHandler: nil)
+        }
+    }
+
+    /// 高清拍照：整幅图交给 H5 走一次识别（不受连续帧的 busy 限制）
+    private func sendShot(_ b64: String) {
+        DispatchQueue.main.async { [weak self] in
+            self?.hint.text = "已拍照，识别中..."
+        }
+        guard let wv = webView else { return }
+        let js = "window._onNativeShot&&window._onNativeShot('\(b64)')"
+        DispatchQueue.main.async {
+            wv.evaluateJavaScript(js, completionHandler: nil)
+        }
+    }
+
+    @objc private func takeShot() {
+        wantShot = true
+        DispatchQueue.main.async { [weak self] in
+            self?.hint.text = "拍照中..."
         }
     }
 }

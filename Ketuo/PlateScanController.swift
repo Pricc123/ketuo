@@ -44,6 +44,10 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
     private let minusBtn = UIButton(type: .system)
     private let plusBtn = UIButton(type: .system)
     private let frameView = UIView()
+    /// 10 秒识别倒计时（原生界面自己显示，不依赖 H5）
+    private let countdownLabel = UILabel()
+    private var countdownTimer: Timer?
+    private var deadline: Date?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -55,10 +59,12 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         startSession()
+        startCountdown()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        stopCountdown()
         stopSession()
         webView?.evaluateJavaScript("window._onNativeClosed&&window._onNativeClosed()", completionHandler: nil)
     }
@@ -90,6 +96,16 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         frameView.backgroundColor = .clear
         frameView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(frameView)
+
+        countdownLabel.text = ""
+        countdownLabel.textColor = .white
+        countdownLabel.font = .systemFont(ofSize: 13, weight: .bold)
+        countdownLabel.textAlignment = .center
+        countdownLabel.backgroundColor = UIColor(red: 0.976, green: 0.451, blue: 0.086, alpha: 0.92)
+        countdownLabel.layer.cornerRadius = 12
+        countdownLabel.clipsToBounds = true
+        countdownLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(countdownLabel)
 
         let panel = UIView()
         panel.backgroundColor = UIColor(white: 0, alpha: 0.55)
@@ -154,6 +170,11 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
             hint.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
             hint.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             hint.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+
+            countdownLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            countdownLabel.bottomAnchor.constraint(equalTo: frameView.topAnchor, constant: -10),
+            countdownLabel.widthAnchor.constraint(equalToConstant: 124),
+            countdownLabel.heightAnchor.constraint(equalToConstant: 24),
 
             frameView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             frameView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
@@ -254,8 +275,15 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         do {
             let input = try AVCaptureDeviceInput(device: dev)
             session.beginConfiguration()
-            // 优先 4K：像素量是 1080p 的 4 倍，放大后依然清晰
-            if session.canSetSessionPreset(.hd4K3840x2160) {
+            // 车牌优先 4K：像素量是 1080p 的 4 倍，放大后依然清晰
+            // 核销二维码用 1080p 即可：帧率更高、对焦更快，二维码不需要 4K
+            if mode == "qr" {
+                if session.canSetSessionPreset(.hd1920x1080) {
+                    session.sessionPreset = .hd1920x1080
+                } else {
+                    session.sessionPreset = .high
+                }
+            } else if session.canSetSessionPreset(.hd4K3840x2160) {
                 session.sessionPreset = .hd4K3840x2160
             } else if session.canSetSessionPreset(.hd1920x1080) {
                 session.sessionPreset = .hd1920x1080
@@ -307,8 +335,10 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
             dev.videoZoomFactor = 1
             dev.unlockForConfiguration()
 
-            // 默认拉到 3 倍：多摄虚拟设备会自动切到长焦镜头，真光学变焦
-            applyZoom(min(defaultZoom, maxZoom), refocus: false)
+            // 车牌默认 3 倍：多摄虚拟设备会自动切到长焦镜头，真光学变焦
+            // 核销二维码保持 1 倍：视野宽、对焦快，拉太近反而扫不出
+            let startZoom: CGFloat = (mode == "qr") ? 1 : defaultZoom
+            applyZoom(min(startZoom, maxZoom), refocus: false)
 
             if mode == "qr" {
                 hint.text = "原生扫码 · 对准二维码自动识别"
@@ -435,6 +465,39 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         dismiss(animated: true, completion: nil)
     }
 
+    // MARK: - 10 秒倒计时
+
+    private func startCountdown() {
+        stopCountdown()
+        deadline = Date().addingTimeInterval(10)
+        updateCountdown()
+        countdownTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.updateCountdown()
+        }
+    }
+
+    private func updateCountdown() {
+        guard let d = deadline else { return }
+        let left = d.timeIntervalSinceNow
+        if left <= 0 {
+            countdownLabel.text = "已超时"
+            stopCountdown()
+            DispatchQueue.main.async { [weak self] in
+                self?.hint.text = "10 秒没认出来，请重试"
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                self?.dismiss(animated: true, completion: nil)
+            }
+            return
+        }
+        countdownLabel.text = String(format: "识别中 %ds", Int(ceil(left)))
+    }
+
+    private func stopCountdown() {
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+    }
+
     // MARK: - 取帧
 
     func captureOutput(_ output: AVCaptureOutput,
@@ -489,9 +552,9 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         }
         guard let cg = ciContext.createCGImage(img, from: img.extent) else { return }
         let ui = UIImage(cgImage: cg, scale: 1, orientation: .up)
-        // 全部走百度车牌识别（已开通后付费，不再受免费额度限制）
         guard let data = ui.jpegData(compressionQuality: 0.85) else { return }
-        send(data.base64EncodedString())
+        // 先用手机自带 Vision 初筛：认出疑似车牌才把这一帧发百度复核；认不出不发，省额度
+        gateAndVerify(ui, data: data)
     }
 
     // MARK: - 本地识别（Vision，零成本无限次）
@@ -535,6 +598,67 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         let h = VNImageRequestHandler(cgImage: cg, orientation: .up, options: [:])
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do { try h.perform([req]) } catch { self?.visionBusy = false }
+        }
+    }
+
+    // MARK: - 本地初筛 + 百度复核
+
+    /// 百度复核请求在途：一次只放一帧出去，避免重复计费
+    private var verifyInFlight = false
+    /// 本地连续未命中帧数：攒够 missForce 帧就强制发一帧给百度兜底
+    private var missSinceLastVerify = 0
+    private let missForce = 15
+
+    /// 先用手机自带 Vision 认一遍：认出车牌格式才把当前帧发百度复核；
+    /// 认不出就不发（省额度）；连续 15 帧（约 9 秒）都认不出，强制发一帧兜底。
+    private func gateAndVerify(_ image: UIImage, data: Data) {
+        if verifyInFlight { return }
+        guard !visionBusy, let cg = image.cgImage else { return }
+        visionBusy = true
+        let req = VNRecognizeTextRequest { [weak self] r, _ in
+            guard let self = self else { return }
+            self.visionBusy = false
+            let obs = (r.results as? [VNRecognizedTextObservation]) ?? []
+            self.reportVision(obs)
+            var found: String? = nil
+            for o in obs {
+                for cand in o.topCandidates(3) {
+                    if let p = Self.extractPlate(cand.string) { found = p; break }
+                }
+                if found != nil { break }
+            }
+            if let p = found {
+                self.missSinceLastVerify = 0
+                self.lastLocalPlate = p
+                self.lastLocalPlateTime = Date()
+                self.fireVerify(data, hintText: "本地认出 \(p)，云端复核中...")
+            } else {
+                self.missSinceLastVerify += 1
+                if self.missSinceLastVerify >= self.missForce {
+                    self.missSinceLastVerify = 0
+                    self.fireVerify(data, hintText: "云端兜底识别中...")
+                }
+            }
+        }
+        req.recognitionLevel = .accurate
+        req.recognitionLanguages = ["zh-Hans", "en-US"]
+        req.usesLanguageCorrection = false
+        let h = VNImageRequestHandler(cgImage: cg, orientation: .up, options: [:])
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do { try h.perform([req]) } catch { self?.visionBusy = false }
+        }
+    }
+
+    /// 把这一帧发给 H5，由 H5 调百度复核
+    private func fireVerify(_ data: Data, hintText: String) {
+        verifyInFlight = true
+        DispatchQueue.main.async { [weak self] in
+            self?.hint.text = hintText
+        }
+        send(data.base64EncodedString())
+        // 百度回包后 H5 会关相机；万一没关，3 秒后解锁，避免卡死
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            self?.verifyInFlight = false
         }
     }
 

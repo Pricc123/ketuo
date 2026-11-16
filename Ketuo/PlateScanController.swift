@@ -442,9 +442,12 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         // 云端兜底默认关闭：百度车牌识别免费额度仅约 1000 次/月（摊每天约 33 次），
         // 实时扫描几十秒就会打光，所以完全依赖手机本地 Vision 识别。
         guard netFallbackEnabled else { return }
+        // 本地先扫：连续 7 帧（约 2 秒）都没命中，才动用百度额度
+        guard localMissCount >= 7 else { return }
         let nowT = Date()
         guard netQuota > 0, nowT.timeIntervalSince(lastNetSent) >= 4.0 else { return }
         netQuota -= 1
+        localMissCount = 0
         lastNetSent = nowT
         guard let data = ui.jpegData(compressionQuality: 0.85) else { return }
         send(data.base64EncodedString())
@@ -474,7 +477,11 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
                 if found != nil { break }
             }
             self.reportVision(obs)
-            guard let plate = found else { return }
+            guard let plate = found else {
+                self.localMissCount += 1
+                return
+            }
+            self.localMissCount = 0
             let now = Date()
             if plate == self.lastLocalPlate && now.timeIntervalSince(self.lastLocalPlateTime) < 3.0 { return }
             self.lastLocalPlate = plate
@@ -575,9 +582,11 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
     }
 
     private var lastNetSent = Date(timeIntervalSince1970: 0)
-    /// 云端兜底开关：免费额度极小，默认关；一次进相机最多 6 次
-    private var netFallbackEnabled = false
-    private var netQuota = 6
+    /// 云端兜底：本地连续失败 2 秒后才用一次百度（车牌专用模型更准），一次进相机最多 3 次
+    private var netFallbackEnabled = true
+    private var netQuota = 3
+    /// 本地识别连续未命中次数
+    private var localMissCount = 0
 
     private func send(_ b64: String) {
         frameCount += 1

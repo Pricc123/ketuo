@@ -192,7 +192,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1622;
+				CURRENT_PROJECT_VERSION = 1623;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Ketuo/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "\U542f\U5f3a\U6c7d\U8f66";
@@ -209,7 +209,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.5;
+				MARKETING_VERSION = 1.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.qiang.ketuo;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -223,7 +223,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1622;
+				CURRENT_PROJECT_VERSION = 1623;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Ketuo/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "\U542f\U5f3a\U6c7d\U8f66";
@@ -240,7 +240,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.5;
+				MARKETING_VERSION = 1.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.qiang.ketuo;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

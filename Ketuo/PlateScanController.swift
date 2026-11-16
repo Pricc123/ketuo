@@ -227,8 +227,10 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
             return
         }
         device = dev
-        maxZoom = min(max(dev.maxAvailableVideoZoomFactor, 1), 8)
+        // 放开到设备硬件上限（iPhone Pro 系列多摄虚拟设备通常支持到 25x 左右）
+        maxZoom = min(max(dev.maxAvailableVideoZoomFactor, 1), 25)
         zoomSlider.maximumValue = Float(maxZoom)
+        zoomSlider.minimumValue = 1
 
         do {
             let input = try AVCaptureDeviceInput(device: dev)
@@ -378,11 +380,16 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
     }
 
     @objc private func zoomIn() {
-        applyZoom(curZoom + max(0.25, (maxZoom - 1) / 10))
+        applyZoom(curZoom + zoomStep())
     }
 
     @objc private func zoomOut() {
-        applyZoom(curZoom - max(0.25, (maxZoom - 1) / 10))
+        applyZoom(curZoom - zoomStep())
+    }
+
+    /// 低倍细调（0.5），高倍粗调（按当前倍率 25% 递增），1x 到 25x 大约 10 步
+    private func zoomStep() -> CGFloat {
+        max(0.5, curZoom * 0.28)
     }
 
     @objc private func toggleTorch() {

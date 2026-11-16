@@ -439,9 +439,12 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         let ui = UIImage(cgImage: cg, scale: 1, orientation: .up)
         // 手机本地 Vision 识别（免费无限次，不消耗任何云端额度）
         recognizeLocally(ui)
-        // 云端兜底限流：先判断再编码，省掉无谓的 JPEG 编码开销
+        // 云端兜底默认关闭：百度车牌识别免费额度仅约 1000 次/月（摊每天约 33 次），
+        // 实时扫描几十秒就会打光，所以完全依赖手机本地 Vision 识别。
+        guard netFallbackEnabled else { return }
         let nowT = Date()
-        guard nowT.timeIntervalSince(lastNetSent) >= 1.5 else { return }
+        guard netQuota > 0, nowT.timeIntervalSince(lastNetSent) >= 4.0 else { return }
+        netQuota -= 1
         lastNetSent = nowT
         guard let data = ui.jpegData(compressionQuality: 0.85) else { return }
         send(data.base64EncodedString())
@@ -572,6 +575,9 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
     }
 
     private var lastNetSent = Date(timeIntervalSince1970: 0)
+    /// 云端兜底开关：免费额度极小，默认关；一次进相机最多 6 次
+    private var netFallbackEnabled = false
+    private var netQuota = 6
 
     private func send(_ b64: String) {
         frameCount += 1

@@ -553,8 +553,8 @@ final class PlateScanController: UIViewController, AVCaptureVideoDataOutputSampl
         guard let cg = ciContext.createCGImage(img, from: img.extent) else { return }
         let ui = UIImage(cgImage: cg, scale: 1, orientation: .up)
         guard let data = ui.jpegData(compressionQuality: 0.85) else { return }
-        // 先用手机自带 Vision 初筛：认出疑似车牌才把这一帧发百度复核；认不出不发，省额度
-        gateAndVerify(ui, data: data)
+        // 全部走百度车牌识别（每帧直发，不做本地初筛）
+        send(data.base64EncodedString())
     }
 
     // MARK: - 本地识别（Vision，零成本无限次）
